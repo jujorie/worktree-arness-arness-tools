@@ -379,3 +379,69 @@ EOF
   [ "$status" -eq 1 ]
   [ "$(printf '%s\n' "${lines[@]}" | cut -d' ' -f2,3 | tr '\n' ' ')" = "R10 $f:1 R7 $f:2 2 files=1 " ]
 }
+
+# Local review of 751a238: quotes are paired by a scanner, so a command between two quoted strings is seen,
+# literal text is never taken for code, and "$(...)" stays code.
+@test "commands between quoted strings are seen and literal text is not code" {
+  fixture f quotes.bats <<'EOF'
+  body="$(cat f)"; curl -s "$url"
+  v="$(a)"; sleep 5 && echo "$y"
+  printf "don't\n" | head -1; grep 'x' f
+  a="$(x)" b="sed -i"
+  echo "cost $" | head -1
+  x="$(printf '%s' "$(timeout 5 cmd)")"
+  echo "a \" | head -1 \""
+EOF
+  run "$SCRIPT" --rules R4,R6,R8,R10 "$f"
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s\n' "${lines[@]}" | cut -d' ' -f2,3 | tr '\n' ' ')" = "R8 $f:1 R10 $f:2 R6 $f:3 R6 $f:5 R10 $f:6 5 files=1 " ]
+  fixture s quotes.sh <<'EOF'
+x="$(a)" && sort "$f"
+EOF
+  run "$SCRIPT" --rules R9 --allowed-commands awk "$s"
+  [ "$status" -eq 1 ]
+  [ "${lines[0]}" = "FINDING R9 $s:1 x=\"\$(a)\" && sort \"\$f\" (uses sort)" ]
+}
+
+@test "HOME set for one command does not count as setting it for the file" {
+  fixture f home1.bats <<'EOF'
+  HOME="$T" run git config --global x y
+  cat "$HOME/.gitconfig"
+EOF
+  run "$SCRIPT" --rules R7 "$f"
+  [ "$status" -eq 1 ]
+  [ "${lines[0]}" = "FINDING R7 $f:2 cat \"\$HOME/.gitconfig\"" ]
+  fixture g home2.bats <<'EOF'
+  HOME="$BATS_TEST_TMPDIR"
+  cat "$HOME/.gitconfig"
+EOF
+  run "$SCRIPT" --rules R7 "$g"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "a subfolder find cannot read gives CHECK_FAILED find" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads any folder"
+  mkdir -p "$W/d"
+  printf '  true\n' > "$W/ok.bats"
+  chmod 000 "$W/d"
+  run "$SCRIPT" --rules R10 "$W"
+  chmod 755 "$W/d"
+  [ "$status" -eq 5 ]
+  # find's own error goes to stderr, which run mixes in: the status line is the last one.
+  [ "${lines[${#lines[@]}-1]}" = "CHECK_FAILED find $W" ]
+}
+
+@test "a check that breaks gives CHECK_FAILED, never CLEAN" {
+  bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin"
+  for c in bash sed find sort tr dirname cat grep mktemp rm; do ln -s "$(command -v "$c")" "$bin/$c"; done
+  printf '#!/bin/sh\nexit 2\n' > "$bin/awk"
+  chmod +x "$bin/awk"
+  printf '  true\n' > "$W/ok.bats"
+  PATH="$bin" run "$bin/bash" "$SCRIPT" --rules R1 "$W/ok.bats"
+  [ "$status" -eq 5 ]
+  [ "$output" = "CHECK_FAILED R1 $W/ok.bats" ]
+  PATH="$bin" run "$bin/bash" "$SCRIPT" --rules R10 "$W/ok.bats"
+  [ "$status" -eq 5 ]
+  [ "$output" = "CHECK_FAILED patterns" ]
+}

@@ -36,10 +36,41 @@ pattern_findings() {
       if (m !~ /^[ \t]*R[0-9]/) return 1
       return (" " m " ") ~ ("[ ,]" rule "[ ,]")
     }
-    # The line without quoted strings, for command-position checks.
-    function unquote(s) {
-      gsub(/"([^"\\]|\\.)*"/, "\"\"", s); gsub(/\047[^\047]*\047/, "\047\047", s)
-      return s
+    # code(s): the line with its literal text emptied, as the shell pairs the quotes: single-quoted text
+    # (a grep pattern, an awk program) and the literal parts of double-quoted text become empty quotes,
+    # while what runs stays: "$(...)" and $var / ${...} expansions inside double quotes included (an escaped
+    # \$ is literal). One scanner, so every rule reads the
+    # same code: a frame stack holds D (inside double quotes) or S<n> (inside $( with n open parens).
+    function code(s,   out, i, n, ch, nx, sp, top, st, k) {
+      out = ""; n = length(s); sp = 0
+      for (i = 1; i <= n; i++) {
+        ch = substr(s, i, 1); nx = substr(s, i + 1, 1)
+        top = sp ? st[sp] : ""
+        if (top == "D") {
+          if (ch == "\\") { i++; continue }
+          if (ch == "\"") { sp--; out = out ch; continue }
+          if (ch == "$" && nx == "(") { st[++sp] = "S1"; out = out "$("; i++; continue }
+          if (ch == "$" && nx == "{") { k = index(substr(s, i), "}"); if (k == 0) k = n - i + 1; out = out substr(s, i, k); i += k - 1; continue }
+          if (ch == "$" && nx ~ /[A-Za-z_]/) {
+            k = i + 1; while (k <= n && substr(s, k, 1) ~ /[A-Za-z0-9_]/) k++
+            out = out substr(s, i, k - i); i = k - 1
+          }
+          continue
+        }
+        if (ch == "\\") { out = out ch nx; i++; continue }
+        if (ch == "\047") {
+          k = index(substr(s, i + 1), "\047")
+          out = out "\047\047"
+          if (k == 0) break
+          i += k; continue
+        }
+        if (ch == "\"") { st[++sp] = "D"; out = out ch; continue }
+        if (ch == "$" && nx == "(") { st[++sp] = "S1"; out = out "$("; i++; continue }
+        if (top != "" && ch == "(") st[sp] = "S" (substr(top, 2) + 1)
+        if (top != "" && ch == ")") { st[sp] = "S" (substr(top, 2) - 1); if (st[sp] == "S0") sp-- }
+        out = out ch
+      }
+      return out
     }
     # c at command position: first on the line, after an operator or "$(", or after a keyword that runs
     # the next command (if, while, then, bats run...).
@@ -48,12 +79,10 @@ pattern_findings() {
         || s ~ ("(^|[^A-Za-z0-9_])(if|elif|while|until|then|do|else|run)[ \t]+" c "([ \t;)]|$)")
     }
     # Rules on one code line (not a comment, not in a heredoc).
-    # Commands are matched on s1, the line without literal text: single-quoted text (a grep pattern, an awk
-    # program) and double-quoted text with no "$(" in it are emptied, while "$(...)" stays, since it is code.
-    # Bash 4 expansions are matched anywhere, quotes included ("${x,,}", "${a[-1]}").
-    function line_rules(ln, raw,   s, s1, i) {
-      s = unquote(raw)
-      s1 = raw; gsub(/\047[^\047]*\047/, "\047\047", s1); gsub(/"([^"\\$]|\\.|\$[^(])*"/, "\"\"", s1)
+    # Commands are matched on s1 = code(raw); bash 4 expansions anywhere, quotes included ("${x,,}",
+    # "${a[-1]}").
+    function line_rules(ln, raw,   s1, i) {
+      s1 = code(raw)
       if (s1 ~ /readlink[ ]-f|sed[ ]-i|date[ ]-d|grep[ ]-P|ma[p]file|read[a]rray|declare[ ]-[An]|stat[ ]-c|[&][>]>|(^|[^|])[|][&]([^&]|$)/ \
           || raw ~ /\$\{[A-Za-z_]+(,,|\^\^)\}|\[[-]1\]\}/)
         report("R4", ln, raw)
@@ -67,14 +96,14 @@ pattern_findings() {
           if (!(watch[i] in allowed) && cmd_at(s1, watch[i])) report("R9", ln, raw " (uses " watch[i] ")")
         return
       }
-      if (!homeset && raw ~ /\$\{?HOME([^A-Za-z0-9_]|$)/ && raw !~ /HOME=/) report("R7", ln, raw)
+      if (!homeset && s1 ~ /\$\{?HOME([^A-Za-z0-9_]|$)/ && s1 !~ /HOME=/) report("R7", ln, raw)
       if (raw ~ /(^|[^A-Za-z0-9_.$}-])\/tmp\//) report("R7", ln, raw)
       if ((cmd_at(s1, "gh") && !stub["gh"]) || (cmd_at(s1, "curl") && !stub["curl"]) || (cmd_at(s1, "wget") && !stub["wget"]))
         report("R8", ln, raw)
       if (raw ~ /git[ \t].*(clone|fetch|pull|push|ls-remote)[ \t].*(https?:\/\/|git@)/) report("R8", ln, raw)
       if (s1 ~ /(^|[;&|({ \t])slee[p][ \t]+[0-9]/ || cmd_at(s1, "time[o]ut") || raw ~ /\$\{?SEC[O]NDS|date[ \t]+\+%s/)
         report("R10", ln, raw)
-      if (s ~ /(^|[;&|{ \t])sk[i]p[ \t]*($|;|&&|\|\||\})/) report("R11", ln, raw)
+      if (s1 ~ /(^|[;&|{ \t])sk[i]p[ \t]*($|;|&&|\|\||\})/) report("R11", ln, raw)
       if (raw ~ /^[ \t]*@test[ \t]+["\047][A-Z][a-z]/) report("R11", ln, raw)
     }
     # A file is checked once it is read whole: R7 and R8 need to know what the file defines. First pass:
@@ -85,23 +114,24 @@ pattern_findings() {
       stub["gh"] = stub["curl"] = stub["wget"] = 0
       mk = 0; td = 0; homeset = 0; tag = ""
       for (i = 1; i <= nl; i++) {
-        raw = L[i]; code[i] = 0
+        raw = L[i]; iscode[i] = 0
         if (raw ~ /bin\/gh([^A-Za-z0-9_]|$)/) stub["gh"] = 1
         if (raw ~ /bin\/curl([^A-Za-z0-9_]|$)/) stub["curl"] = 1
         if (raw ~ /bin\/wget([^A-Za-z0-9_]|$)/) stub["wget"] = 1
         if (tag != "") { if (raw ~ ("^[ \t]*" tag "[ \t]*$")) tag = ""; continue }
         if (raw ~ /^[ \t]*#/) continue
-        code[i] = 1
-        c = unquote(raw)
+        iscode[i] = 1
+        c = code(raw)
         if (c ~ /<<-?[ \t]*[A-Za-z_"\047]/ && c !~ /<<</) {
           tag = raw; sub(/.*<<-?[ \t]*/, "", tag); gsub(/["\047]/, "", tag); sub(/[^A-Za-z0-9_].*$/, "", tag)
         }
         if (!mk && raw ~ /mktemp/) mk = i
         if (raw ~ /^[ \t]*teardown[ \t]*\(\)|rm[ \t]+(-[A-Za-z]*[rR][A-Za-z]*f|-[A-Za-z]*f[A-Za-z]*[rR]|-[rR][ \t]+-f|-f[ \t]+-[rR])/) td = 1
-        # HOME set for the test (a command of its own, or exported), not for one command (env HOME=x cmd).
-        if (raw ~ /^[ \t]*(export[ \t]+)?HOME=|[;{][ \t]*(export[ \t]+)?HOME=/) homeset = 1
+        # HOME set for the test: exported, or an assignment that is the whole command; not for one command
+        # (HOME=x cmd, env HOME=x cmd). On code(raw) a quoted value is "" and has no spaces.
+        if (c ~ /export[ \t]+HOME=/ || c ~ /(^|[;{])[ \t]*HOME=[^ \t;}]*[ \t]*($|;|\})/) homeset = 1
       }
-      for (i = 1; i <= nl; i++) if (code[i]) line_rules(i, L[i])
+      for (i = 1; i <= nl; i++) if (iscode[i]) line_rules(i, L[i])
       if (kind == "test" && file ~ /\.bats$/ && mk && !td)
         report("R7", mk, L[mk] " (mktemp with no teardown or rm -rf)")
       # In line order (the file-level R7 comes last); insertion sort keeps equal lines in rule order.
