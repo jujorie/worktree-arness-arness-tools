@@ -18,7 +18,9 @@ Comment lines and heredoc bodies (where tests keep their fixtures) are never che
 read as the shell pairs its quotes: literal text is not code (single-quoted and `$'...'` text such as a grep
 pattern or an awk program, and the literal parts of double-quoted text), while what runs is, inside double
 quotes too: `$(...)`, backticks and `$var` / `${...}` expansions. Commands count at command position: first on
-the line, after an operator, `$(` or a backtick, or after a keyword (`if`, `while`, `then`, `run`...).
+the line, after an operator, `$(` or a backtick, or after a keyword (`if`, `while`, `then`, `run`...). A `#`
+that starts a word outside quotes starts a comment. R1 has its own parser; R5, and R7's `$HOME` and `/tmp/`,
+R8's git remotes and R10's `$SECONDS` / `date +%s` read the raw line.
 
 Known limits of the heuristics (silence a false positive with `check-bats: ignore`):
 - The text of `bash -c "..."` / `sh -c "..."` is read as literal text, so R4, R6, R8 and R10 do not look
@@ -75,6 +77,9 @@ Known limits of the heuristics (silence a false positive with `check-bats: ignor
   the environment (`RE='\(' awk '$0 ~ ENVIRON["RE"]'`), not `-v`, which eats them.
 
 ## R6. `grep -q` and `head` at the end of a pipe under `pipefail`
+
+- **Flags**: a pipe that ends in `grep -q` or `head`, in a file that turns `pipefail` on (`set -o pipefail`,
+  `set -euo pipefail`). bats does not turn it on, so a test file is flagged only when it does it itself.
 
 - **Why**: they stop reading; with more than 64 KB of output the writer dies of SIGPIPE and the condition
   comes out false. The small data of tests hides it.

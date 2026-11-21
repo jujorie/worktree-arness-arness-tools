@@ -86,7 +86,7 @@ for p in "${paths[@]}"; do
     # -H: a folder given as a link (arness links plugin skills into skills/) is searched.
     list="$(find -H "$p" \( -name .git -o -name node_modules \) -prune -o -type f \
       \( -name '*.bats' -o -name '*.bash' -o -name '*.sh' \) -print)" || fail find "$p"
-    list="$(printf '%s\n' "$list" | LC_ALL=C sort)"
+    list="$(printf '%s\n' "$list" | LC_ALL=C sort)" || fail sort "$p"
     while IFS= read -r f; do
       [ -z "$f" ] || add_file "$f"
     done <<< "$list"
@@ -151,7 +151,7 @@ if wanted R9 && [ -z "$allowed" ] && [ "${#scripts[@]}" -gt 0 ]; then
 fi
 
 if [ "$run_bats" -eq 1 ] && [ "${#tests[@]}" -gt 0 ]; then
-  log="$(mktemp)"
+  log="$(mktemp)" || fail mktemp
   trap 'rm -f "$log"' EXIT
   for f in "${tests[@]}"; do
     case "$f" in *.bats) ;; *) continue ;; esac

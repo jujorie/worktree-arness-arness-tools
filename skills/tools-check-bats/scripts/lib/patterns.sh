@@ -62,6 +62,8 @@ pattern_findings() {
           continue
         }
         if (ch == "\\") { emit(ch nx); i++; continue }
+        # A # that starts a word, outside quotes, starts a comment: the rest of the line is not code.
+        if (ch == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;&|(]/)) break
         if (ch == "`") { if (top == "B") sp--; else st[++sp] = "B"; emit(ch); continue }
         if (ch == "$" && nx == "\047") {
           for (k = i + 2; k <= n; k++) { if (substr(s, k, 1) == "\\") k++; else if (substr(s, k, 1) == "\047") break }
@@ -97,7 +99,8 @@ pattern_findings() {
         report("R4", ln, raw)
       if (raw ~ /gen[s]ub|asort[i]?\(|strf[t]ime|sys[t]ime|PROC[I]NFO/)
         report("R5", ln, raw)
-      if (s1 ~ /(^|[^|])[|][ \t]*(grep[ \t][^|]*-[A-Za-z]*q|h[e]ad([ \t]|$))/)
+      # Only in a file that turns pipefail on: without it a pipe exits with the status of its reader.
+      if (pipefail && s1 ~ /(^|[^|])[|][ \t]*(grep[ \t][^|]*-[A-Za-z]*q|h[e]ad([ \t]|$))/)
         report("R6", ln, raw)
       if (kind == "script") {
         if (!r9) return
@@ -122,7 +125,7 @@ pattern_findings() {
     function flush(   i, j, raw, b, c, tag, mk, td, t, a) {
       if (file == "") return
       stub["gh"] = stub["curl"] = stub["wget"] = 0
-      mk = 0; td = 0; homeset = 0; tag = ""
+      mk = 0; td = 0; homeset = 0; pipefail = 0; tag = ""
       for (i = 1; i <= nl; i++) {
         raw = L[i]; iscode[i] = 0
         if (raw ~ /bin\/gh([^A-Za-z0-9_]|$)/) stub["gh"] = 1
@@ -137,6 +140,7 @@ pattern_findings() {
         }
         # mktemp as a call ("$(mktemp -d)"), not as a word (command -v mktemp); a cleanup in code, or in the
         # string a trap runs.
+        if (c ~ /(^|[;&|{ \t])set[ \t][^;]*pipefail/) pipefail = 1
         if (!mk && cmd_at(c, "mktemp")) mk = i
         if (c ~ /^[ \t]*teardown[ \t]*\(\)/ || (c ~ /(^|[^A-Za-z0-9_])trap[ \t]/ ? raw : c) ~ CLEANUP) td = 1
         # HOME set for the test: exported, or an assignment (local too) that is the whole command; not for
