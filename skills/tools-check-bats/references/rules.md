@@ -14,9 +14,11 @@ false positive is silenced on its line with `# check-bats: ignore <rule>` and a 
 | R7, R8, R10, R11 | `.bats`, `.bash` | line patterns (R7's missing cleanup: per `.bats` file) |
 | R9 | `.sh` | commands at command position outside `--allowed-commands` |
 
-Comment lines and heredoc bodies (where tests keep their fixtures) are never checked by R4-R11. Commands are
-matched outside single quotes (a grep pattern or an awk program is not a call), inside `"$(...)"` too, and at
-command position: first on the line, after an operator, `$(`, or a keyword (`if`, `while`, `then`, `run`...).
+Comment lines and heredoc bodies (where tests keep their fixtures) are never checked by R4-R11. Each line is
+read as the shell pairs its quotes: literal text is not code (single-quoted and `$'...'` text such as a grep
+pattern or an awk program, and the literal parts of double-quoted text), while what runs is, inside double
+quotes too: `$(...)`, backticks and `$var` / `${...}` expansions. Commands count at command position: first on
+the line, after an operator, `$(` or a backtick, or after a keyword (`if`, `while`, `then`, `run`...).
 
 ## R1. Every assertion that is not the last line must be able to fail
 
@@ -76,9 +78,12 @@ command position: first on the line, after an operator, `$(`, or a keyword (`if`
 
 ## R7. A world of its own per test
 
-- **Flags**: a `.bats` file that calls `mktemp` in its code with no `teardown` and no `rm -rf` (any spelling:
-  `-rf`, `-Rf`, `-fr`, `-r -f`); a line that uses `$HOME` in a file that never sets it (`HOME=...` or
-  `export HOME=...` as a command; `env HOME=x cmd` on the line itself is fine too); a fixed `/tmp/` path.
+- **Flags**: a `.bats` file that calls `mktemp` (at command position, `"$(mktemp -d)"` included) with no
+  `teardown` and no `rm -rf` in its code or in a `trap` string (any spelling: `-rf`, `-Rf`, `-fr`, `-r -f`);
+  a line that uses `$HOME`, single quotes included (`bash -c '...'` runs it with the real HOME; an escaped
+  `\$HOME` is text), in a file that never sets it: `export HOME=...`, or `HOME=...` / `local HOME=...` as a
+  whole command (`HOME=x cmd` sets it for one command only; `env HOME=x cmd` on the line itself is fine);
+  a fixed `/tmp/` path.
 - **Fix**: `TMP="$(mktemp -d)"` in `setup`, `teardown() { rm -rf "$TMP"; }`, or `$BATS_TEST_TMPDIR` (bats
   removes it); point `HOME` at the temporary folder. No real network, no real remotes, no writes outside
   the temporary folder.
@@ -100,7 +105,8 @@ command position: first on the line, after an operator, `$(`, or a keyword (`if`
   (`NOTE` line).
 - **Flags**: a watched external command (`awk basename cat cut date dirname find grep head jq mktemp
   readlink sed sort tail tee tr uniq wc xargs`...) at command position in a `.sh` file, not in the list.
-  Text inside single quotes (awk or jq programs) is not checked. Shell builtins are never reported.
+  Literal text (awk or jq programs in single quotes, messages in double quotes) is not checked; `$(...)` and
+  backticks are. Shell builtins are never reported.
 - **Why**: with `set -e` a missing command breaks the script; inside an `if` it silently takes the other
   branch.
 - **Fix**: a builtin instead (`${f##*/}` for `basename`, `${f%/*}` for `dirname`, `while read` for `wc -l`,

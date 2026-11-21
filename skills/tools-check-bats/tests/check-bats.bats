@@ -445,3 +445,62 @@ EOF
   [ "$status" -eq 5 ]
   [ "$output" = "CHECK_FAILED patterns" ]
 }
+
+# Local review of cd4259f: backticks and $'...' are paired as the shell does.
+@test "backticks and ANSI-C quotes are paired as the shell does" {
+  fixture f tick.bats <<'EOF'
+  x="`sed -i s/a/b/ f`"
+  out=`timeout 5 cmd`
+  echo $'don\'t'; cmd | head -1
+  echo "a ` b"
+EOF
+  run "$SCRIPT" --rules R4,R6,R10 "$f"
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s\n' "${lines[@]}" | cut -d' ' -f2,3 | tr '\n' ' ')" = "R4 $f:1 R10 $f:2 R6 $f:3 3 files=1 " ]
+  fixture s tick.sh <<'EOF'
+n="`sort f`"
+EOF
+  run "$SCRIPT" --rules R9 --allowed-commands awk "$s"
+  [ "$status" -eq 1 ]
+  [ "${lines[0]}" = "FINDING R9 $s:1 n=\"\`sort f\`\" (uses sort)" ]
+}
+
+@test "HOME counts as set only when the whole command is the assignment, whatever its value" {
+  fixture f h1.bats <<'EOF'
+  HOME="${T}" run git config --global x y
+  cat "$HOME/.gitconfig"
+EOF
+  run "$SCRIPT" --rules R7 "$f"
+  [ "$status" -eq 1 ]
+  [ "${lines[0]}" = "FINDING R7 $f:2 cat \"\$HOME/.gitconfig\"" ]
+  for set in 'HOME="$(mktemp -d)"; trap "rm -rf $HOME" EXIT' 'export HOME="$T"' 'local HOME="$T"' '[ -n "$T" ] && HOME="$T"'; do  # check-bats: ignore R7 fixture text
+    printf '  %s\n  cat "$HOME/.gitconfig"\n' "$set" > "$W/h2.bats"  # check-bats: ignore R7 fixture text
+    run "$SCRIPT" --rules R7 "$W/h2.bats"
+    [ "$status" -eq 0 ] || { echo "$set: $output"; false; }
+  done
+}
+
+@test "HOME inside single quotes counts, an escaped \$HOME does not" {
+  fixture f h3.bats <<'EOF'
+  run bash -c 'cat "$HOME/.cfg"'
+  echo "\$HOME is not used"
+EOF
+  run "$SCRIPT" --rules R7 "$f"
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s\n' "${lines[@]}" | cut -d' ' -f3 | tr '\n' ' ')" = "$f:1 files=1 " ]
+}
+
+@test "R7 reads mktemp and rm -rf in code, not in literal text" {
+  fixture f lit.bats <<'EOF'
+  command -v mktemp >/dev/null || skip "needs mktemp"
+EOF
+  run "$SCRIPT" --rules R7 "$f"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  fixture g lit2.bats <<'EOF'
+  d="$(mktemp -d)"
+  echo "no rm -rf here"
+EOF
+  run "$SCRIPT" --rules R7 "$g"
+  [ "$status" -eq 1 ]
+  [[ "${lines[0]}" == "FINDING R7 $g:1 "* ]] || false
+}

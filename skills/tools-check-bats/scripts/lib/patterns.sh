@@ -20,6 +20,7 @@ pattern_findings() {
       n = split(ENVIRON["ALLOWED"], a, /[ ,]+/)
       for (i = 1; i <= n; i++) if (a[i] != "") allowed[a[i]] = 1
       r9 = (n > 0 && ENVIRON["ALLOWED"] ~ /[^ ,]/)
+      CLEANUP = "rm[ \t]+(-[A-Za-z]*[rR][A-Za-z]*f|-[A-Za-z]*f[A-Za-z]*[rR]|-[rR][ \t]+-f|-f[ \t]+-[rR])"
       # External commands R9 watches; shell builtins are never reported.
       nw = split("awk basename cat chmod cksum comm cp cut date dirname env expr file find grep gzip " \
         "head jq ln mkdir mktemp mv od paste perl python3 readlink realpath rev rg rm sed seq sort " \
@@ -36,41 +37,49 @@ pattern_findings() {
       if (m !~ /^[ \t]*R[0-9]/) return 1
       return (" " m " ") ~ ("[ ,]" rule "[ ,]")
     }
-    # code(s): the line with its literal text emptied, as the shell pairs the quotes: single-quoted text
-    # (a grep pattern, an awk program) and the literal parts of double-quoted text become empty quotes,
-    # while what runs stays: "$(...)" and $var / ${...} expansions inside double quotes included (an escaped
-    # \$ is literal). One scanner, so every rule reads the
-    # same code: a frame stack holds D (inside double quotes) or S<n> (inside $( with n open parens).
-    function code(s,   out, i, n, ch, nx, sp, top, st, k) {
-      out = ""; n = length(s); sp = 0
+    # code(s, keep): the line with its literal text emptied, as the shell pairs quotes, so every rule reads
+    # the same code. Single-quoted and $'...' text (a grep pattern, an awk program) becomes empty quotes.
+    # Inside double quotes, what runs stays when keep is 1: "$(...)", `...` and $var / ${...} expansions;
+    # the literal parts go (an escaped \$ is literal). keep 0 empties double-quoted text whole (a value
+    # with no spaces, to tell an assignment from a command). Frames: D double quotes, S<n> $( with n open
+    # parens, B backticks.
+    function emit(x) { if (_keep || _dq == 0) _out = _out x }
+    function code(s, keep,   i, n, ch, nx, sp, top, st, k) {
+      _out = ""; _keep = keep; _dq = 0; n = length(s); sp = 0
       for (i = 1; i <= n; i++) {
         ch = substr(s, i, 1); nx = substr(s, i + 1, 1)
         top = sp ? st[sp] : ""
         if (top == "D") {
           if (ch == "\\") { i++; continue }
-          if (ch == "\"") { sp--; out = out ch; continue }
-          if (ch == "$" && nx == "(") { st[++sp] = "S1"; out = out "$("; i++; continue }
-          if (ch == "$" && nx == "{") { k = index(substr(s, i), "}"); if (k == 0) k = n - i + 1; out = out substr(s, i, k); i += k - 1; continue }
+          if (ch == "\"") { sp--; _dq--; emit(ch); continue }
+          if (ch == "$" && nx == "(") { st[++sp] = "S1"; emit("$("); i++; continue }
+          if (ch == "`") { st[++sp] = "B"; emit(ch); continue }
+          if (ch == "$" && nx == "{") { k = index(substr(s, i), "}"); if (k == 0) k = n - i + 1; emit(substr(s, i, k)); i += k - 1; continue }
           if (ch == "$" && nx ~ /[A-Za-z_]/) {
             k = i + 1; while (k <= n && substr(s, k, 1) ~ /[A-Za-z0-9_]/) k++
-            out = out substr(s, i, k - i); i = k - 1
+            emit(substr(s, i, k - i)); i = k - 1
           }
           continue
         }
-        if (ch == "\\") { out = out ch nx; i++; continue }
+        if (ch == "\\") { emit(ch nx); i++; continue }
+        if (ch == "`") { if (top == "B") sp--; else st[++sp] = "B"; emit(ch); continue }
+        if (ch == "$" && nx == "\047") {
+          for (k = i + 2; k <= n; k++) { if (substr(s, k, 1) == "\\") k++; else if (substr(s, k, 1) == "\047") break }
+          emit("$\047\047"); i = k; continue
+        }
         if (ch == "\047") {
           k = index(substr(s, i + 1), "\047")
-          out = out "\047\047"
+          emit("\047\047")
           if (k == 0) break
           i += k; continue
         }
-        if (ch == "\"") { st[++sp] = "D"; out = out ch; continue }
-        if (ch == "$" && nx == "(") { st[++sp] = "S1"; out = out "$("; i++; continue }
-        if (top != "" && ch == "(") st[sp] = "S" (substr(top, 2) + 1)
-        if (top != "" && ch == ")") { st[sp] = "S" (substr(top, 2) - 1); if (st[sp] == "S0") sp-- }
-        out = out ch
+        if (ch == "\"") { emit(ch); st[++sp] = "D"; _dq++; continue }
+        if (ch == "$" && nx == "(") { st[++sp] = "S1"; emit("$("); i++; continue }
+        if (top ~ /^S/ && ch == "(") st[sp] = "S" (substr(top, 2) + 1)
+        if (top ~ /^S/ && ch == ")") { st[sp] = "S" (substr(top, 2) - 1); if (st[sp] == "S0") sp-- }
+        emit(ch)
       }
-      return out
+      return _out
     }
     # c at command position: first on the line, after an operator or "$(", or after a keyword that runs
     # the next command (if, while, then, bats run...).
@@ -82,7 +91,7 @@ pattern_findings() {
     # Commands are matched on s1 = code(raw); bash 4 expansions anywhere, quotes included ("${x,,}",
     # "${a[-1]}").
     function line_rules(ln, raw,   s1, i) {
-      s1 = code(raw)
+      s1 = code(raw, 1)
       if (s1 ~ /readlink[ ]-f|sed[ ]-i|date[ ]-d|grep[ ]-P|ma[p]file|read[a]rray|declare[ ]-[An]|stat[ ]-c|[&][>]>|(^|[^|])[|][&]([^&]|$)/ \
           || raw ~ /\$\{[A-Za-z_]+(,,|\^\^)\}|\[[-]1\]\}/)
         report("R4", ln, raw)
@@ -96,7 +105,8 @@ pattern_findings() {
           if (!(watch[i] in allowed) && cmd_at(s1, watch[i])) report("R9", ln, raw " (uses " watch[i] ")")
         return
       }
-      if (!homeset && s1 ~ /\$\{?HOME([^A-Za-z0-9_]|$)/ && s1 !~ /HOME=/) report("R7", ln, raw)
+      # $HOME anywhere but escaped, single quotes included: bash -c '...' runs that text with the real HOME.
+      if (!homeset && raw ~ /(^|[^\\])\$\{?HOME([^A-Za-z0-9_]|$)/ && raw !~ /HOME=/) report("R7", ln, raw)
       if (raw ~ /(^|[^A-Za-z0-9_.$}-])\/tmp\//) report("R7", ln, raw)
       if ((cmd_at(s1, "gh") && !stub["gh"]) || (cmd_at(s1, "curl") && !stub["curl"]) || (cmd_at(s1, "wget") && !stub["wget"]))
         report("R8", ln, raw)
@@ -109,7 +119,7 @@ pattern_findings() {
     # A file is checked once it is read whole: R7 and R8 need to know what the file defines. First pass:
     # which lines are code (not a comment, not a heredoc body), and what the code does (mktemp, cleanup,
     # HOME). Stubs count anywhere, heredocs included: that is where tests write them.
-    function flush(   i, j, raw, c, tag, mk, td, t, a) {
+    function flush(   i, j, raw, b, c, tag, mk, td, t, a) {
       if (file == "") return
       stub["gh"] = stub["curl"] = stub["wget"] = 0
       mk = 0; td = 0; homeset = 0; tag = ""
@@ -121,15 +131,18 @@ pattern_findings() {
         if (tag != "") { if (raw ~ ("^[ \t]*" tag "[ \t]*$")) tag = ""; continue }
         if (raw ~ /^[ \t]*#/) continue
         iscode[i] = 1
-        c = code(raw)
+        c = code(raw, 1)
         if (c ~ /<<-?[ \t]*[A-Za-z_"\047]/ && c !~ /<<</) {
           tag = raw; sub(/.*<<-?[ \t]*/, "", tag); gsub(/["\047]/, "", tag); sub(/[^A-Za-z0-9_].*$/, "", tag)
         }
-        if (!mk && raw ~ /mktemp/) mk = i
-        if (raw ~ /^[ \t]*teardown[ \t]*\(\)|rm[ \t]+(-[A-Za-z]*[rR][A-Za-z]*f|-[A-Za-z]*f[A-Za-z]*[rR]|-[rR][ \t]+-f|-f[ \t]+-[rR])/) td = 1
-        # HOME set for the test: exported, or an assignment that is the whole command; not for one command
-        # (HOME=x cmd, env HOME=x cmd). On code(raw) a quoted value is "" and has no spaces.
-        if (c ~ /export[ \t]+HOME=/ || c ~ /(^|[;{])[ \t]*HOME=[^ \t;}]*[ \t]*($|;|\})/) homeset = 1
+        # mktemp as a call ("$(mktemp -d)"), not as a word (command -v mktemp); a cleanup in code, or in the
+        # string a trap runs.
+        if (!mk && cmd_at(c, "mktemp")) mk = i
+        if (c ~ /^[ \t]*teardown[ \t]*\(\)/ || (c ~ /(^|[^A-Za-z0-9_])trap[ \t]/ ? raw : c) ~ CLEANUP) td = 1
+        # HOME set for the test: exported, or an assignment (local too) that is the whole command; not for
+        # one command (HOME=x cmd, env HOME=x cmd). On code(raw, 0) a double-quoted value is "".
+        b = code(raw, 0)
+        if (b ~ /export[ \t]+HOME=/ || b ~ /(^|[;{&|])[ \t]*(local[ \t]+)?HOME=[^ \t;]*[ \t]*($|;|&&|\|\||\})/) homeset = 1
       }
       for (i = 1; i <= nl; i++) if (iscode[i]) line_rules(i, L[i])
       if (kind == "test" && file ~ /\.bats$/ && mk && !td)

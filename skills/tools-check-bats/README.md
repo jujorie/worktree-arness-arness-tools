@@ -26,4 +26,4 @@ A false positive is silenced on its line: `# check-bats: ignore R6 small input`.
 | `references/rules.md` | Each rule: why, what is flagged, how to fix it |
 | `tests/` | bats tests: `bats skills/tools-check-bats/tests/` |
 
-Requires bash, awk, dirname, find, grep, mktemp, sed, sort and tr; `bats` for `--run`.
+Requires bash, awk, dirname, find, grep, mktemp, rm, sort and tr; `bats` for `--run`.
