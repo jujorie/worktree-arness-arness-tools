@@ -30,6 +30,9 @@ Known limits of the heuristics (silence a false positive with `check-bats: ignor
   `pipefail` set by a sourced library or a `load`ed helper, or turned on right after `(` or `$(` (a
   subshell), is not seen.
 - A `#` that starts a word inside backticks or an unquoted `${...}` is taken for a comment and ends the line.
+- Quotes are paired within one line: a single-quoted string that spans lines (a multi-line awk program) is read
+  as code on its inner lines, and its closing line as the start of a new string. In scripts with such programs,
+  expect R9 noise on the inner lines; silence it there with `check-bats: ignore R9`.
 - R7 counts HOME as set only for a quoted or plain value: `HOME=$(mktemp -d)` unquoted, or an assignment
   right after `then` / `do`, is not seen; quote the value (`HOME="$(mktemp -d)"`) or put it on its own line.
 
