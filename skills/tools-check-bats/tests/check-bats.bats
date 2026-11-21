@@ -254,3 +254,128 @@ EOF
   [ "$status" -eq 4 ]
   [ "$output" = "MISSING_TOOL bats" ]
 }
+
+# Review of PR #1, PRRT_kwDOV2aggM66UX3N: an empty rule list checks nothing and must not give CLEAN.
+@test "an empty --rules list is a usage error" {
+  run "$SCRIPT" --rules "" "$W"
+  [ "$status" -eq 2 ]
+  run "$SCRIPT" --rules , "$W"
+  [ "$status" -eq 2 ]
+}
+
+# PRRT_kwDOV2aggM66UX28: arness links plugin skills into skills/, so a path given as a link must be read.
+@test "a folder given through a symbolic link is searched" {
+  mkdir -p "$W/b"
+  printf '  sleep 1\n' > "$W/b/z.bats"
+  ln -s "$W/b" "$W/link"
+  run "$SCRIPT" --rules R10 "$W/link"
+  [ "$status" -eq 1 ]
+  [ "${lines[0]}" = "FINDING R10 $W/link/z.bats:1 sleep 1" ]
+}
+
+# PRRT_kwDOV2aggM66UX29: a file that cannot be read must never end in CLEAN.
+@test "a file that cannot be read gives CHECK_FAILED, never CLEAN" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads any file"
+  printf 'echo ok\n' > "$W/a.sh"
+  printf '  true\n' > "$W/a.bats"
+  chmod 000 "$W/a.sh" "$W/a.bats"
+  run "$SCRIPT" "$W/a.sh"
+  chmod 644 "$W/a.sh" "$W/a.bats"
+  [ "$status" -eq 5 ]
+  [ "$output" = "CHECK_FAILED unreadable $W/a.sh" ]
+  chmod 000 "$W/a.bats"
+  run "$SCRIPT" --rules R10 "$W"
+  chmod 644 "$W/a.bats"
+  [ "$status" -eq 5 ]
+  [ "$output" = "CHECK_FAILED unreadable $W/a.bats" ]
+}
+
+# PRRT_kwDOV2aggM66UX2_: the text of an R1 finding may itself hold file:line: pairs.
+@test "R1 keeps file:line and the text when the text holds file:line:" {
+  fixture f r1c.bats <<'EOF'
+  run lint
+  [[ "$output" == *"a.sh:3: x"* ]]
+  [[ "$output" == *": unterminated x"* ]]
+EOF
+  run "$SCRIPT" --rules R1 "$f"
+  [ "$status" -eq 1 ]
+  [ "${lines[0]}" = "FINDING R1 $f:2 [[ \"\$output\" == *\"a.sh:3: x\"* ]]" ]
+  [ "${lines[1]}" = "FINDING R1 $f:3 [[ \"\$output\" == *\": unterminated x\"* ]]" ]
+}
+
+# PRRT_kwDOV2aggM66UX3B: a command inside "$(...)" is still a command for R6, R8 and R10.
+@test "R6, R8 and R10 see commands inside double-quoted command substitutions" {
+  fixture f subst.bats <<'EOF'
+  first="$(printf '%s\n' "$out" | head -1)"
+  body="$(curl -s https://example.com)"
+  x="$(timeout 5 cmd)"
+  [ "$output" = "FINDING R6 x: sleep 1 | head -1" ]
+EOF
+  run "$SCRIPT" --rules R6,R8,R10 "$f"
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s\n' "${lines[@]}" | cut -d' ' -f2,3 | tr '\n' ' ')" = "R6 $f:1 R8 $f:2 R10 $f:3 3 files=1 " ]
+}
+
+# PRRT_kwDOV2aggM66UX3E: a command right after if, elif, while or until is at command position.
+@test "commands after if, elif, while and until are at command position" {
+  fixture s kw.sh <<'EOF'
+if grep -q x "$f"; then :; fi
+while sort f; do :; done
+EOF
+  run "$SCRIPT" --rules R9 --allowed-commands awk "$s"
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s\n' "${lines[@]}" | cut -d' ' -f3 | tr '\n' ' ')" = "$s:1 $s:2 files=1 " ]
+  fixture f kw.bats <<'EOF'
+  if gh auth status; then :; fi
+  until timeout 5 cmd; do :; done
+EOF
+  run "$SCRIPT" --rules R8,R10 "$f"
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s\n' "${lines[@]}" | cut -d' ' -f2,3 | tr '\n' ' ')" = "R8 $f:1 R10 $f:2 2 files=1 " ]
+}
+
+# PRRT_kwDOV2aggM66UX3I: R7 reads only code lines, and any spelling of rm -rf is a cleanup.
+@test "R7 ignores mktemp and rm -rf in comments and heredocs, and accepts rm -Rf and rm -r -f" {
+  fixture f fix.bats <<'EOF'
+  # d="$(mktemp -d)"
+  cat > "$BATS_TEST_TMPDIR/s.sh" <<'IN'
+d="$(mktemp -d)"
+IN
+EOF
+  run "$SCRIPT" --rules R7 "$f"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  fixture g hid.bats <<'EOF'
+  d="$(mktemp -d)"
+  cat > "$d/s.sh" <<'IN'
+rm -rf "$x"
+IN
+EOF
+  run "$SCRIPT" --rules R7 "$g"
+  [ "$status" -eq 1 ]
+  [ "${lines[0]}" = "FINDING R7 $g:1 d=\"\$(mktemp -d)\" (mktemp with no teardown or rm -rf)" ]
+  for rm in 'rm -Rf' 'rm -r -f' 'rm -fR'; do
+    printf '  d="$(mktemp -d)"\n  %s "$d"\n' "$rm" > "$W/rm.bats"
+    run "$SCRIPT" --rules R7 "$W/rm.bats"
+    [ "$status" -eq 0 ] || { echo "$rm: $output"; false; }
+  done
+}
+
+# PRRT_kwDOV2aggM66UX3L: pointing HOME at the temporary folder is the documented fix of R7.
+@test "R7 does not flag HOME in a file that sets HOME" {
+  fixture f home.bats <<'EOF'
+setup() { export HOME="$BATS_TEST_TMPDIR"; }
+  [ -f "$HOME/.cfg" ] || false
+EOF
+  run "$SCRIPT" --rules R7 "$f"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "findings of a file come in line order, the file-level R7 included" {
+  fixture f order.bats <<'EOF'
+  sleep 1
+  d="$(mktemp -d)"
+EOF
+  run "$SCRIPT" --rules R7,R10 "$f"
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s\n' "${lines[@]}" | cut -d' ' -f2,3 | tr '\n' ' ')" = "R10 $f:1 R7 $f:2 2 files=1 " ]
+}

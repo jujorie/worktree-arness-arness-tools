@@ -26,7 +26,3 @@ lib_scripts() {
   done
 }
 
-# Test files: every bats file and its helpers.
-test_files() {
-  find "$REPO_ROOT/skills" "$REPO_ROOT/tests" -type f \( -name '*.bats' -o -name '*.bash' \)
-}

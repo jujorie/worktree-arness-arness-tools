@@ -21,12 +21,15 @@ load helpers/repo
 
 @test "shellcheck passes" {
   command -v shellcheck >/dev/null || skip "shellcheck not installed"
-  run shellcheck -x -P SCRIPTDIR $(entry_scripts)
+  local entries=() libs=() f
+  while IFS= read -r f; do entries+=("$f"); done < <(entry_scripts)
+  while IFS= read -r f; do libs+=("$f"); done < <(lib_scripts)
+  run shellcheck -x -P SCRIPTDIR "${entries[@]}"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # shellcheck reports nothing inside a sourced file: each library is checked on its own, without the
   # checks that need the whole script (a global set in one block and read in another).
-  [ -n "$(lib_scripts)" ] || return 0
-  run shellcheck -e SC2034,SC2153,SC2154 $(lib_scripts)
+  [ "${#libs[@]}" -gt 0 ] || return 0
+  run shellcheck -e SC2034,SC2153,SC2154 "${libs[@]}"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 

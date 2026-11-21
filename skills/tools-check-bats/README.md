@@ -10,6 +10,7 @@ check-bats.sh [--rules R1,R4,...] [--allowed-commands "<cmd> ..."] [--run] <path
             runtime (R9, needs --allowed-commands), timing, style
   --run     R2/R3: bats with /bin and /usr/bin first in PATH, judged by exit code
 → FINDING <rule> <file>:<line> <text> ... then CLEAN files=<n> (0) | FINDINGS <n> files=<n> (1)
+  | CHECK_FAILED <why> [<path>] (5): a file not read or a check broken, never reported clean
 ```
 
 A false positive is silenced on its line: `# check-bats: ignore R6 small input`.
@@ -25,4 +26,4 @@ A false positive is silenced on its line: `# check-bats: ignore R6 small input`.
 | `references/rules.md` | Each rule: why, what is flagged, how to fix it |
 | `tests/` | bats tests: `bats skills/tools-check-bats/tests/` |
 
-Requires bash, awk, find, sed and sort; `bats` for `--run`.
+Requires bash, awk, dirname, find, grep, mktemp, sed, sort and tr; `bats` for `--run`.

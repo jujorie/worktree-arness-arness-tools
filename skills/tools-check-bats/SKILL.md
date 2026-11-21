@@ -7,7 +7,7 @@ description: >-
   dependencies and style, and optionally run them under bash 3.2. Only reports findings, never
   edits. Use when asked to check, verify, audit or review bats tests, e.g. "revisa los bats de X",
   "verifica los tests bats del worktree", "¿hay aserciones silenciosas?", "check the bats files".
-  Fails with NO_FILES or MISSING_TOOL.
+  Fails with NO_FILES, MISSING_TOOL or CHECK_FAILED.
 allowed-tools: Bash(skills/tools-check-bats/scripts/check-bats.sh *)
 ---
 
@@ -23,7 +23,8 @@ gets the report (the user, or a coding agent given the findings and the rule sec
 
 1. From the user's message, get:
    - **paths**: folders or files to check, relative to the current folder (e.g. a repo or worktree, or its
-     `tests/`). A folder is searched for `*.bats`, `*.bash` and `*.sh`, skipping `.git` and `node_modules`.
+     `tests/`). A folder is searched for `*.bats`, `*.bash` and `*.sh`, skipping `.git` and `node_modules`;
+     a folder given as a link (a plugin skill linked into `skills/`) is searched too.
      If none is given and it is not clear which repo, ask.
    - **allowed commands** (R9), only when the scripts must run in a minimal runtime (a slim image, a
      restricted runner) and the repo's docs list its commands: pass that list. Never invent it; without
@@ -44,6 +45,7 @@ gets the report (the user, or a coding agent given the findings and the rule sec
 | `CLEAN files=<n>` | 0 | Report that the n files pass every rule checked. Done. |
 | `FINDINGS <n> files=<n>` | 1 | Report (below). |
 | `NO_FILES` | 3 | No `.bats`, `.bash` or `.sh` under the paths. Tell the user; ask for the right path. |
+| `CHECK_FAILED <why> [<path>]` | 5 | A file or folder could not be read (`unreadable`, `find`) or a check broke (`R1`, `patterns`; stderr says why). Nothing was reported as clean: show it, fix the permission or path, and run again |
 | `MISSING_TOOL bats` | 4 | `--run` needs bats-core. Tell the user to install it (`brew install bats-core`, `apt-get install bats`). |
 | message on stderr | 2 | Bad option or path. Show it and fix the call. |
 

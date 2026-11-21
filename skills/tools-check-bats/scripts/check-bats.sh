@@ -18,6 +18,8 @@
 #   FINDINGS <n> files=<n>                  last line, exit 1
 #   NO_FILES                                no file to check, exit 3
 #   MISSING_TOOL <tool>                     exit 4
+#   CHECK_FAILED <why> [<path>]             a file or folder could not be read, or a check failed: nothing
+#                                           is reported as clean, exit 5 (details on stderr)
 # Usage errors: message on stderr, exit 2.
 set -euo pipefail
 
@@ -43,6 +45,7 @@ while [ "$#" -gt 0 ]; do
     --rules)
       [ "$#" -ge 2 ] || usage
       rules="$(printf '%s' "$2" | tr ',' ' ')"
+      [ -n "${rules// /}" ] || { echo "--rules needs at least one rule" >&2; exit 2; }
       for r in $rules; do
         case " $ALL_RULES " in *" $r "*) ;; *) echo "unknown rule: $r (known: $ALL_RULES)" >&2; exit 2 ;; esac
       done
@@ -62,9 +65,16 @@ done
 
 wanted() { case " $rules " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
+# fail <why> [<path>]: nothing can be reported as clean when a file was not read or a check broke.
+fail() {
+  echo "CHECK_FAILED $*"
+  exit 5
+}
+
 tests=()
 scripts=()
 add_file() {
+  [ -r "$1" ] || fail unreadable "$1"
   case "$1" in
     *.bats|*.bash) tests+=("$1") ;;
     *.sh) scripts+=("$1") ;;
@@ -73,8 +83,10 @@ add_file() {
 }
 for p in "${paths[@]}"; do
   if [ -d "$p" ]; then
-    list="$(find "$p" \( -name .git -o -name node_modules \) -prune -o -type f \
-      \( -name '*.bats' -o -name '*.bash' -o -name '*.sh' \) -print | LC_ALL=C sort)"
+    # -H: a folder given as a link (arness links plugin skills into skills/) is searched.
+    list="$(find -H "$p" \( -name .git -o -name node_modules \) -prune -o -type f \
+      \( -name '*.bats' -o -name '*.bash' -o -name '*.sh' \) -print)" || fail find "$p"
+    list="$(printf '%s\n' "$list" | LC_ALL=C sort)"
     while IFS= read -r f; do
       [ -z "$f" ] || add_file "$f"
     done <<< "$list"
@@ -104,17 +116,35 @@ emit() {
   done
 }
 
+# r1 <file>: R1 findings of one file as "R1 <file>:<line> <text>". silent_assertions prints "<file>:<line>: <text>"
+# or "<file>: unterminated ..."; the known file prefix is cut off, so a text holding "x:3:" stays intact.
+r1() {
+  local out line rest
+  out="$(silent_assertions "$1")" || fail R1 "$1"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    rest="${line#"$1":}"
+    case "$rest" in
+      " unterminated "*) printf 'R1 %s:0 %s\n' "$1" "${rest# }" ;;
+      *) line="${rest#*:}"; printf 'R1 %s:%s %s\n' "$1" "${rest%%:*}" "${line#"${line%%[! ]*}"}" ;;
+    esac
+  done <<< "$out"
+}
+
+# Each check's output is captured first, so a check that fails stops the run instead of reading as clean.
 if [ "${#tests[@]}" -gt 0 ]; then
   if wanted R1; then
-    r1="$(silent_assertions "${tests[@]}" | sed -E \
-      -e 's/^(.*): (unterminated .*)$/R1 \1:0 \2/' \
-      -e 's/^(.*):([0-9]+):[ ]*(.*)$/R1 \1:\2 \3/')"
-    emit <<< "$r1"
+    for f in "${tests[@]}"; do
+      out="$(r1 "$f")" || { printf "%s\n" "$out"; exit 5; }
+      emit <<< "$out"
+    done
   fi
-  emit <<< "$(pattern_findings test "" "${tests[@]}")"
+  out="$(pattern_findings test "" "${tests[@]}")" || fail patterns
+  emit <<< "$out"
 fi
 if [ "${#scripts[@]}" -gt 0 ]; then
-  emit <<< "$(pattern_findings script "$allowed" "${scripts[@]}")"
+  out="$(pattern_findings script "$allowed" "${scripts[@]}")" || fail patterns
+  emit <<< "$out"
 fi
 if wanted R9 && [ -z "$allowed" ] && [ "${#scripts[@]}" -gt 0 ]; then
   echo "NOTE R9 skipped: no --allowed-commands"

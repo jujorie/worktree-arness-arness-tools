@@ -13,7 +13,8 @@ From the arness repo, with its `plugin-manage` skill: "instala el plugin https:/
 It shows the skills and permission rules and asks before installing. Update it the same way ("actualiza el
 plugin worktree-arness-arness-tools").
 
-Requires `bash`, `awk`, `find`, `sed` and `sort`; `bats` to run tests with `tools-check-bats --run`.
+Requires `bash`, `awk`, `dirname`, `find`, `grep`, `mktemp`, `sed`, `sort` and `tr`; `bats` to run tests with
+`tools-check-bats --run`.
 
 ## Layout
 

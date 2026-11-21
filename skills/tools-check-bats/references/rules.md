@@ -14,7 +14,9 @@ false positive is silenced on its line with `# check-bats: ignore <rule>` and a 
 | R7, R8, R10, R11 | `.bats`, `.bash` | line patterns (R7's missing cleanup: per `.bats` file) |
 | R9 | `.sh` | commands at command position outside `--allowed-commands` |
 
-Comment lines and heredoc bodies (where tests keep their fixtures) are never checked by R4-R11.
+Comment lines and heredoc bodies (where tests keep their fixtures) are never checked by R4-R11. Commands are
+matched outside single quotes (a grep pattern or an awk program is not a call), inside `"$(...)"` too, and at
+command position: first on the line, after an operator, `$(`, or a keyword (`if`, `while`, `then`, `run`...).
 
 ## R1. Every assertion that is not the last line must be able to fail
 
@@ -74,8 +76,9 @@ Comment lines and heredoc bodies (where tests keep their fixtures) are never che
 
 ## R7. A world of its own per test
 
-- **Flags**: a `.bats` file that calls `mktemp` with no `teardown` and no `rm -rf`; a line that uses
-  `$HOME` without setting it (`HOME=...` on the line is fine); a fixed `/tmp/` path.
+- **Flags**: a `.bats` file that calls `mktemp` in its code with no `teardown` and no `rm -rf` (any spelling:
+  `-rf`, `-Rf`, `-fr`, `-r -f`); a line that uses `$HOME` in a file that never sets it (`HOME=...` or
+  `export HOME=...` as a command; `env HOME=x cmd` on the line itself is fine too); a fixed `/tmp/` path.
 - **Fix**: `TMP="$(mktemp -d)"` in `setup`, `teardown() { rm -rf "$TMP"; }`, or `$BATS_TEST_TMPDIR` (bats
   removes it); point `HOME` at the temporary folder. No real network, no real remotes, no writes outside
   the temporary folder.

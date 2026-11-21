@@ -20,3 +20,8 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install bats-core shellcheck
       - run: ./scripts/test.sh
+      # The scripts promise bash 3.2: on macOS run the suite again with /bin/bash first in PATH, since
+      # #!/usr/bin/env bash takes Homebrew's bash when the image has it.
+      - name: Test with bash 3.2 (macos)
+        if: runner.os == 'macOS'
+        run: PATH=/bin:/usr/bin:$PATH ./scripts/test.sh
