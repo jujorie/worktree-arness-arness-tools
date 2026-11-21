@@ -20,6 +20,12 @@ pattern or an awk program, and the literal parts of double-quoted text), while w
 quotes too: `$(...)`, backticks and `$var` / `${...}` expansions. Commands count at command position: first on
 the line, after an operator, `$(` or a backtick, or after a keyword (`if`, `while`, `then`, `run`...).
 
+Known limits of the heuristics (silence a false positive with `check-bats: ignore`):
+- The text of `bash -c "..."` / `sh -c "..."` is read as literal text, so R4, R6, R8 and R10 do not look
+  inside it (R7 still finds `$HOME` there).
+- R7 counts HOME as set only for a quoted or plain value: `HOME=$(mktemp -d)` unquoted, or an assignment
+  right after `then` / `do`, is not seen; quote the value (`HOME="$(mktemp -d)"`) or put it on its own line.
+
 ## R1. Every assertion that is not the last line must be able to fail
 
 - **Why**: in bash 3.2 (macOS `/bin/bash`) a failing `[[ ]]` or `(( ))` that is not the last command of a
