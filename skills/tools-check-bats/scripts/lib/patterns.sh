@@ -140,7 +140,8 @@ pattern_findings() {
         }
         # mktemp as a call ("$(mktemp -d)"), not as a word (command -v mktemp); a cleanup in code, or in the
         # string a trap runs.
-        if (c ~ /(^|[;&|{ \t])set[ \t][^;]*pipefail/) pipefail = 1
+        # set -o pipefail, set -euo pipefail; not set +o pipefail, which turns it off.
+        if (c ~ /(^|[;&|{ \t])set[ \t][^;]*-[A-Za-z]*o[ \t]+pipefail/) pipefail = 1
         if (!mk && cmd_at(c, "mktemp")) mk = i
         if (c ~ /^[ \t]*teardown[ \t]*\(\)/ || (c ~ /(^|[^A-Za-z0-9_])trap[ \t]/ ? raw : c) ~ CLEANUP) td = 1
         # HOME set for the test: exported, or an assignment (local too) that is the whole command; not for

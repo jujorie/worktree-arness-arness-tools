@@ -45,7 +45,7 @@ gets the report (the user, or a coding agent given the findings and the rule sec
 | `CLEAN files=<n>` | 0 | Report that the n files pass every rule checked. Done. |
 | `FINDINGS <n> files=<n>` | 1 | Report (below). |
 | `NO_FILES` | 3 | No `.bats`, `.bash` or `.sh` under the paths. Tell the user; ask for the right path. |
-| `CHECK_FAILED <why> [<path>]` | 5 | A file or folder could not be read (`unreadable`, `find`) or a check broke (`R1`, `patterns`; stderr says why). Nothing was reported as clean: show it, fix the permission or path, and run again |
+| `CHECK_FAILED <why> [<path>]` | 5 | A file or folder could not be read (`unreadable`, `find`), the file list could not be sorted (`sort`), `--run` could not create its temporary log (`mktemp`: check `TMPDIR` and free disk), or a check broke (`R1`, `patterns`). stderr says why. Nothing was reported as clean: show it, fix the cause, and run again |
 | `MISSING_TOOL bats` | 4 | `--run` needs bats-core. Tell the user to install it (`brew install bats-core`, `apt-get install bats`). |
 | message on stderr | 2 | Bad option or path. Show it and fix the call. |
 

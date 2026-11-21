@@ -190,6 +190,7 @@ EOF
 
 @test "comments and heredoc bodies are not checked by the pattern rules" {
   fixture f body.bats <<'EOF'
+  set -o pipefail
   # sleep 5 | head -1
   cat > "$TMP/f" <<'IN'
   sed -i x f
@@ -553,4 +554,25 @@ EOF
   PATH="$bin" run "$bin/bash" "$SCRIPT" --run --rules R1 "$W/good.bats"
   [ "$status" -eq 5 ]
   [ "${lines[${#lines[@]}-1]}" = "CHECK_FAILED mktemp" ]
+}
+
+@test "a folder gives CHECK_FAILED sort when sort fails" {
+  bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin"
+  for c in bash awk find tr dirname cat grep rm; do ln -s "$(command -v "$c")" "$bin/$c"; done
+  printf '#!/bin/sh\nexit 1\n' > "$bin/sort"
+  chmod +x "$bin/sort"
+  printf '  true\n' > "$W/ok.bats"
+  PATH="$bin" run "$bin/bash" "$SCRIPT" --rules R1 "$W"
+  [ "$status" -eq 5 ]
+  [ "${lines[${#lines[@]}-1]}" = "CHECK_FAILED sort $W" ]
+}
+
+@test "set +o pipefail does not turn R6 on" {
+  fixture f off.sh <<'EOF'
+set +o pipefail
+cmd | head -1
+EOF
+  run "$SCRIPT" --rules R6 "$f"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
 }

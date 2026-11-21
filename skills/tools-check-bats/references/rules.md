@@ -20,11 +20,15 @@ pattern or an awk program, and the literal parts of double-quoted text), while w
 quotes too: `$(...)`, backticks and `$var` / `${...}` expansions. Commands count at command position: first on
 the line, after an operator, `$(` or a backtick, or after a keyword (`if`, `while`, `then`, `run`...). A `#`
 that starts a word outside quotes starts a comment. R1 has its own parser; R5, and R7's `$HOME` and `/tmp/`,
-R8's git remotes and R10's `$SECONDS` / `date +%s` read the raw line.
+R8's git remotes, R10's `$SECONDS` / `date +%s`, R4's bash 4 expansions (`${x,,}`, `${a[-1]}`) and R11's
+`@test` names read the raw line, trailing comment included.
 
 Known limits of the heuristics (silence a false positive with `check-bats: ignore`):
 - The text of `bash -c "..."` / `sh -c "..."` is read as literal text, so R4, R6, R8 and R10 do not look
   inside it (R7 still finds `$HOME` there).
+- R6's `pipefail` is per file: a `set -o pipefail` anywhere in the file turns R6 on for all of it, and a
+  `pipefail` set by a sourced library or a `load`ed helper is not seen.
+- A `#` that starts a word inside backticks or an unquoted `${...}` is taken for a comment and ends the line.
 - R7 counts HOME as set only for a quoted or plain value: `HOME=$(mktemp -d)` unquoted, or an assignment
   right after `then` / `do`, is not seen; quote the value (`HOME="$(mktemp -d)"`) or put it on its own line.
 
